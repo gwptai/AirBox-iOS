@@ -1,1 +1,40 @@
+name: Build AirBox
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: AirBox
+        run: xcodegen generate
+
+      - name: Build
+        working-directory: AirBox
+        run: |
+          xcodebuild \
+            -project AirBox.xcodeproj \
+            -scheme AirBox \
+            -configuration Debug \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirBox-app
+          path: AirBox/build/Build/Products/Debug-iphoneos/AirBox.app
