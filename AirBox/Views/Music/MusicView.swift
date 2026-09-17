@@ -10,11 +10,12 @@ struct MusicView: View {
     @State private var currentTrack: AudioItem?
     @State private var isPlaying = false
     @State private var progress: Double = 0
-    @State private var timer: Timer?
     @State private var errorMessage: String?
 
     private let audioTypes: [UTType] = [.audio, .mp3, .mpeg4Audio, .wav, .aiff]
-    private var filteredTracks: [AudioItem] { searchText.isEmpty ? tracks : tracks.filter { $0.title.localizedCaseInsensitiveContains(searchText) } }
+    private var filteredTracks: [AudioItem] {
+        searchText.isEmpty ? tracks : tracks.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+    }
 
     var body: some View {
         ZStack {
@@ -48,6 +49,9 @@ struct MusicView: View {
         .alert("Не удалось воспроизвести", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
         } message: { Text(errorMessage ?? "Неизвестная ошибка") }
+        .onReceive(Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()) { _ in
+            updatePlaybackState()
+        }
         .onDisappear { stopPlayback() }
     }
 
@@ -114,8 +118,13 @@ struct MusicView: View {
         }
 
         if currentTrack?.id == track.id, let player {
-            if player.timeControlStatus == .playing { player.pause(); isPlaying = false }
-            else { player.play(); isPlaying = true }
+            if player.timeControlStatus == .playing {
+                player.pause()
+                isPlaying = false
+            } else {
+                player.play()
+                isPlaying = true
+            }
             return
         }
 
@@ -129,7 +138,6 @@ struct MusicView: View {
             progress = 0
             newPlayer.play()
             isPlaying = true
-            startTimer()
         } catch {
             player = nil
             currentTrack = nil
@@ -140,8 +148,13 @@ struct MusicView: View {
 
     private func togglePlayback() {
         guard let player else { return }
-        if player.timeControlStatus == .playing { player.pause(); isPlaying = false }
-        else { player.play(); isPlaying = true }
+        if player.timeControlStatus == .playing {
+            player.pause()
+            isPlaying = false
+        } else {
+            player.play()
+            isPlaying = true
+        }
     }
 
     private func seek(to value: Double) {
@@ -149,26 +162,29 @@ struct MusicView: View {
         player.seek(to: CMTime(seconds: max(0, value), preferredTimescale: 600))
     }
 
-    private func startTimer() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-            guard let player, let item = player.currentItem else { return }
-            let current = item.currentTime().seconds
-            if current.isFinite { progress = max(0, current) }
-            if item.status == .failed {
-                isPlaying = false
-                errorMessage = item.error?.localizedDescription ?? "Не удалось воспроизвести аудиофайл."
-            }
-            if item.duration.isNumeric && current >= max(item.duration.seconds - 0.15, 0) {
-                isPlaying = false
-            }
+    private func updatePlaybackState() {
+        guard let player, let item = player.currentItem else { return }
+        let current = item.currentTime().seconds
+        if current.isFinite {
+            progress = max(0, current)
         }
-        RunLoop.main.add(timer!, forMode: .common)
+
+        if item.status == .failed {
+            isPlaying = false
+            errorMessage = item.error?.localizedDescription ?? "Не удалось воспроизвести аудиофайл."
+            return
+        }
+
+        if item.status == .readyToPlay, player.timeControlStatus == .playing {
+            isPlaying = true
+        }
+
+        if item.duration.isNumeric && current >= max(item.duration.seconds - 0.15, 0) {
+            isPlaying = false
+        }
     }
 
     private func stopPlayback() {
-        timer?.invalidate()
-        timer = nil
         player?.pause()
         player = nil
         isPlaying = false
@@ -186,10 +202,25 @@ struct MusicView: View {
                 do {
                     let copied = try MediaStorage.copyFile(from: sourceURL, to: dir)
                     let localURL = dir.appendingPathComponent(copied.fileName)
-                    let asset = AVURLAsset(url: localURL)
-                    let duration = asset.duration.isNumeric ? asset.duration.seconds : 0
-                    tracks.insert(AudioItem(title: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, duration: duration > 0 ? duration : nil, fileSize: copied.fileSize), at: 0)
+                    tracks.insert(AudioItem(title: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, duration: nil, fileSize: copied.fileSize), at: 0)
                     imported = true
+
+                    // Read duration asynchronously with the modern AVAsset API.
+                    let asset = AVURLAsset(url: localURL)
+                    let insertedID = tracks[0].id
+                    Task { @MainActor in
+                        do {
+                            let duration = try await asset.load(.duration)
+                            guard duration.isNumeric else { return }
+                            let seconds = duration.seconds
+                            guard seconds.isFinite, seconds > 0,
+                                  let index = tracks.firstIndex(where: { $0.id == insertedID }) else { return }
+                            tracks[index].duration = seconds
+                            MediaStorage.saveAudio(tracks)
+                        } catch {
+                            // Duration is optional metadata; playback itself still works.
+                        }
+                    }
                 } catch {
                     errorMessage = "Не удалось импортировать \(sourceURL.lastPathComponent): \(error.localizedDescription)"
                 }
@@ -202,7 +233,10 @@ struct MusicView: View {
 
     private func delete(at offsets: IndexSet) {
         for item in offsets.map({ filteredTracks[$0] }) {
-            if currentTrack?.id == item.id { stopPlayback(); currentTrack = nil }
+            if currentTrack?.id == item.id {
+                stopPlayback()
+                currentTrack = nil
+            }
             MediaStorage.deleteFile(named: item.fileName, in: MediaStorage.audioDirectory)
             tracks.removeAll { $0.id == item.id }
         }
