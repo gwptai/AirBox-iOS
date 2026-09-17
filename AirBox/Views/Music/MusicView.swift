@@ -6,14 +6,14 @@ struct MusicView: View {
     @State private var tracks: [AudioItem] = MediaStorage.loadAudio()
     @State private var showImporter = false
     @State private var searchText = ""
-    @State private var player: AVAudioPlayer?
+    @State private var player: AVPlayer?
     @State private var currentTrack: AudioItem?
     @State private var isPlaying = false
     @State private var progress: Double = 0
     @State private var timer: Timer?
     @State private var errorMessage: String?
 
-    private let audioTypes: [UTType] = [.audio]
+    private let audioTypes: [UTType] = [.audio, .mp3, .mpeg4Audio, .wav, .aiff]
     private var filteredTracks: [AudioItem] { searchText.isEmpty ? tracks : tracks.filter { $0.title.localizedCaseInsensitiveContains(searchText) } }
 
     var body: some View {
@@ -35,8 +35,8 @@ struct MusicView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
             }
-            if let track = currentTrack, let duration = player?.duration, duration > 0 {
-                VStack { Spacer(); playerBar(track: track, duration: duration) }
+            if let track = currentTrack {
+                VStack { Spacer(); playerBar(track: track) }
                     .ignoresSafeArea(.keyboard)
             }
         }
@@ -47,9 +47,7 @@ struct MusicView: View {
         .fileImporter(isPresented: $showImporter, allowedContentTypes: audioTypes, allowsMultipleSelection: true) { importTracks($0) }
         .alert("Не удалось воспроизвести", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "Неизвестная ошибка")
-        }
+        } message: { Text(errorMessage ?? "Неизвестная ошибка") }
         .onDisappear { stopPlayback() }
     }
 
@@ -71,8 +69,9 @@ struct MusicView: View {
         .cardStyle()
     }
 
-    private func playerBar(track: AudioItem, duration: Double) -> some View {
-        VStack(spacing: 10) {
+    private func playerBar(track: AudioItem) -> some View {
+        let duration = max(track.duration ?? 0, 0.01)
+        return VStack(spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title).foregroundColor(.white).font(.system(size: 15, weight: .semibold)).lineLimit(1)
@@ -87,8 +86,8 @@ struct MusicView: View {
                         .clipShape(Circle())
                 }
             }
-            Slider(value: $progress, in: 0...max(duration, 0.01)) { editing in
-                if !editing { player?.currentTime = progress }
+            Slider(value: $progress, in: 0...duration) { editing in
+                if !editing { seek(to: progress) }
             }
             .tint(AppTheme.accent)
             HStack { Text(formatTime(progress)); Spacer(); Text(formatTime(duration)) }
@@ -102,6 +101,12 @@ struct MusicView: View {
         .padding(.bottom, 8)
     }
 
+    private func configureAudioSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [.allowAirPlay])
+        try session.setActive(true)
+    }
+
     private func play(_ track: AudioItem) {
         guard let url = track.localURL, FileManager.default.fileExists(atPath: url.path) else {
             errorMessage = "Файл музыки не найден. Импортируй его заново."
@@ -109,74 +114,90 @@ struct MusicView: View {
         }
 
         if currentTrack?.id == track.id, let player {
-            if player.isPlaying { player.pause(); isPlaying = false }
+            if player.timeControlStatus == .playing { player.pause(); isPlaying = false }
             else { player.play(); isPlaying = true }
             return
         }
 
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay])
-            try session.setActive(true, options: [])
-
-            let newPlayer = try AVAudioPlayer(contentsOf: url)
-            newPlayer.prepareToPlay()
+            try configureAudioSession()
+            player?.pause()
+            let newPlayer = AVPlayer(url: url)
             newPlayer.volume = 1.0
-            guard newPlayer.play() else {
-                errorMessage = "iOS не смогло начать воспроизведение этого аудиофайла."
-                return
-            }
-
-            player?.stop()
             player = newPlayer
             currentTrack = track
-            isPlaying = true
             progress = 0
+            newPlayer.play()
+            isPlaying = true
             startTimer()
         } catch {
-            errorMessage = error.localizedDescription
+            player = nil
             currentTrack = nil
             isPlaying = false
+            errorMessage = error.localizedDescription
         }
     }
 
     private func togglePlayback() {
         guard let player else { return }
-        if player.isPlaying { player.pause(); isPlaying = false }
-        else if player.play() { isPlaying = true }
+        if player.timeControlStatus == .playing { player.pause(); isPlaying = false }
+        else { player.play(); isPlaying = true }
+    }
+
+    private func seek(to value: Double) {
+        guard let player else { return }
+        player.seek(to: CMTime(seconds: max(0, value), preferredTimescale: 600))
     }
 
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
-            guard let player else { return }
-            progress = player.currentTime
-            if !player.isPlaying && player.currentTime >= max(player.duration - 0.15, 0) {
+            guard let player, let item = player.currentItem else { return }
+            let current = item.currentTime().seconds
+            if current.isFinite { progress = max(0, current) }
+            if item.status == .failed {
+                isPlaying = false
+                errorMessage = item.error?.localizedDescription ?? "Не удалось воспроизвести аудиофайл."
+            }
+            if item.duration.isNumeric && current >= max(item.duration.seconds - 0.15, 0) {
                 isPlaying = false
             }
         }
+        RunLoop.main.add(timer!, forMode: .common)
     }
 
     private func stopPlayback() {
         timer?.invalidate()
         timer = nil
-        player?.stop()
+        player?.pause()
         player = nil
         isPlaying = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func importTracks(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let dir = MediaStorage.audioDirectory else { return }
-        for sourceURL in urls {
-            let accessing = sourceURL.startAccessingSecurityScopedResource()
-            defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
-            guard let copied = try? MediaStorage.copyFile(from: sourceURL, to: dir) else { continue }
-            let localURL = dir.appendingPathComponent(copied.fileName)
-            let duration = (try? AVAudioPlayer(contentsOf: localURL).duration) ?? 0
-            tracks.insert(AudioItem(title: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, duration: duration > 0 ? duration : nil, fileSize: copied.fileSize), at: 0)
+        switch result {
+        case .success(let urls):
+            guard let dir = MediaStorage.audioDirectory else { return }
+            var imported = false
+            for sourceURL in urls {
+                let accessing = sourceURL.startAccessingSecurityScopedResource()
+                defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+                do {
+                    let copied = try MediaStorage.copyFile(from: sourceURL, to: dir)
+                    let localURL = dir.appendingPathComponent(copied.fileName)
+                    let asset = AVURLAsset(url: localURL)
+                    let duration = asset.duration.isNumeric ? asset.duration.seconds : 0
+                    tracks.insert(AudioItem(title: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, duration: duration > 0 ? duration : nil, fileSize: copied.fileSize), at: 0)
+                    imported = true
+                } catch {
+                    errorMessage = "Не удалось импортировать \(sourceURL.lastPathComponent): \(error.localizedDescription)"
+                }
+            }
+            if imported { MediaStorage.saveAudio(tracks) }
+        case .failure(let error):
+            errorMessage = error.localizedDescription
         }
-        MediaStorage.saveAudio(tracks)
     }
 
     private func delete(at offsets: IndexSet) {
