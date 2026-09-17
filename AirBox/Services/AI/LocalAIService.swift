@@ -59,10 +59,11 @@ actor LocalLlamaEngine {
         contextParams.n_ctx = configuration.contextSize
         contextParams.n_batch = min(configuration.contextSize, 512)
 
+        // llama.swift exposes these fields as Int32 on the current C API.
         let cpuCount = ProcessInfo.processInfo.processorCount
-        let threads = max(2, min(6, cpuCount - 2))
-        contextParams.n_threads = UInt32(threads)
-        contextParams.n_threads_batch = UInt32(threads)
+        let threads = max(1, min(8, cpuCount - 2))
+        contextParams.n_threads = Int32(threads)
+        contextParams.n_threads_batch = Int32(threads)
 
         guard let context = llama_init_from_model(model, contextParams) else {
             throw LocalAIError.contextLoadFailed
@@ -76,7 +77,7 @@ actor LocalLlamaEngine {
         let maxNewTokens = min(configuration.maxOutputTokens, max(0, contextSize - promptTokens.count - 1))
         guard maxNewTokens > 0 else { throw LocalAIError.promptTooLarge }
 
-        var batch = llama_batch_init(UInt32(max(promptTokens.count, 1)), 0, 1)
+        var batch = llama_batch_init(Int32(max(promptTokens.count, 1)), 0, 1)
         defer { llama_batch_free(batch) }
 
         batch.n_tokens = Int32(promptTokens.count)
@@ -145,7 +146,11 @@ actor LocalLlamaEngine {
         backendInitialized = true
 
         var modelParams = llama_model_default_params()
+#if targetEnvironment(simulator)
+        modelParams.n_gpu_layers = 0
+#else
         modelParams.n_gpu_layers = 99
+#endif
 
         guard let loadedModel = llama_model_load_from_file(store.modelURL.path, modelParams) else {
             llama_backend_free()
