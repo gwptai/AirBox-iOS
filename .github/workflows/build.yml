@@ -19,30 +19,47 @@ jobs:
 
       - name: Generate Xcode project
         working-directory: AirBox
-        run: xcodegen generate --spec project.yml
+        run: |
+          rm -rf AirBox.xcodeproj build
+          xcodegen generate --spec project.yml
 
       - name: Check project
         working-directory: AirBox
         run: |
           ls -la
           test -d AirBox.xcodeproj
+          test -f Info.plist
 
-      - name: Build AirBox
+      - name: Build unsigned iOS archive
         working-directory: AirBox
         run: |
           xcodebuild \
             -project AirBox.xcodeproj \
             -scheme AirBox \
-            -sdk iphonesimulator \
+            -sdk iphoneos \
             -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/DerivedData \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/AirBox.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            archive
 
-      - name: Upload AirBox.app
+      - name: Create IPA
+        working-directory: AirBox
+        run: |
+          rm -rf ipa
+          mkdir -p ipa/Payload
+          cp -R build/AirBox.xcarchive/Products/Applications/AirBox.app ipa/Payload/
+          cd ipa
+          zip -qry ../AirBox.ipa Payload
+          cd ..
+          ls -lh AirBox.ipa
+          unzip -l AirBox.ipa | head -30
+
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: AirBox-iOS-build
-          path: AirBox/build/DerivedData/Build/Products/Debug-iphonesimulator/AirBox.app
+          name: AirBox-IPA
+          path: AirBox/AirBox.ipa
+          if-no-files-found: error
