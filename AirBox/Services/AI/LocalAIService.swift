@@ -40,9 +40,9 @@ struct LocalModelStore: Sendable {
 
 actor LocalLlamaEngine {
     private let configuration: LocalAIConfiguration
-    private var model: OpaquePointer?
-    private var vocab: OpaquePointer?
-    private var backendInitialized = false
+    private nonisolated(unsafe) var model: OpaquePointer?
+    private nonisolated(unsafe) var vocab: OpaquePointer?
+    private nonisolated(unsafe) var backendInitialized = false
 
     init(configuration: LocalAIConfiguration) { self.configuration = configuration }
 
@@ -59,7 +59,6 @@ actor LocalLlamaEngine {
         contextParams.n_ctx = configuration.contextSize
         contextParams.n_batch = min(configuration.contextSize, 512)
 
-        // llama.swift exposes these fields as Int32 on the current C API.
         let cpuCount = ProcessInfo.processInfo.processorCount
         let threads = max(1, min(8, cpuCount - 2))
         contextParams.n_threads = Int32(threads)
