@@ -25,12 +25,11 @@ struct FilesView: View {
         .searchable(text: $searchText, prompt: "Поиск файлов")
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { CircleIconButton(systemImage: "plus") { showImporter = true } } }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { importFiles($0) }
-        .sheet(item: $previewURL) { url in
-            QuickLookPreview(url: url)
-                .ignoresSafeArea()
+        .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
+            if let url = previewURL { QuickLookPreview(url: url).ignoresSafeArea() }
         }
-        .sheet(item: $shareURL) { url in
-            ShareSheet(items: [url])
+        .sheet(isPresented: Binding(get: { shareURL != nil }, set: { if !$0 { shareURL = nil } })) {
+            if let url = shareURL { ShareSheet(items: [url]) }
         }
         .alert("Файл недоступен", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
@@ -117,7 +116,6 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
-
     func makeCoordinator() -> Coordinator { Coordinator(url: url) }
 
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
