@@ -11,28 +11,23 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Скачать репозиторий
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Установить XcodeGen
-        run: |
-          brew install xcodegen
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
-      - name: Сгенерировать Xcode проект
+      - name: Generate Xcode project
         working-directory: AirBox
-        run: |
-          rm -rf AirBox.xcodeproj
-          xcodegen generate --spec project.yml
+        run: xcodegen generate --spec project.yml
 
-      - name: Проверить проект
+      - name: Check project
         working-directory: AirBox
         run: |
           ls -la
-          ls -la App
-          ls -la Models
-          ls -la Views
+          test -d AirBox.xcodeproj
 
-      - name: Собрать AirBox
+      - name: Build AirBox
         working-directory: AirBox
         run: |
           xcodebuild \
@@ -40,27 +35,13 @@ jobs:
             -scheme AirBox \
             -sdk iphonesimulator \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
-
-      - name: Упаковать приложение
-        working-directory: AirBox
-        run: |
-          mkdir -p build
-          xcodebuild \
-            -project AirBox.xcodeproj \
-            -scheme AirBox \
-            -sdk iphonesimulator \
-            -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Сохранить результат сборки
+      - name: Upload AirBox.app
         uses: actions/upload-artifact@v4
         with:
           name: AirBox-iOS-build
