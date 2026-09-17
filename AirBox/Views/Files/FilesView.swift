@@ -28,12 +28,15 @@ struct FilesView: View {
         .searchable(text: $searchText, prompt: "Поиск файлов")
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { CircleIconButton(systemImage: "plus") { showImporter = true } } }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { importFiles($0) }
-        .sheet(item: $previewURL) { url in
-            QuickLookPreview(url: url)
-                .ignoresSafeArea()
+        .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
+            if let url = previewURL {
+                QuickLookPreview(url: url).ignoresSafeArea()
+            }
         }
-        .sheet(item: $shareURL) { url in
-            ShareSheet(items: [url])
+        .sheet(isPresented: Binding(get: { shareURL != nil }, set: { if !$0 { shareURL = nil } })) {
+            if let url = shareURL {
+                ShareSheet(items: [url])
+            }
         }
         .alert("Файл недоступен", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
@@ -69,7 +72,9 @@ struct FilesView: View {
                 .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
             .onDelete { offsets in
-                for item in offsets.map({ filteredFiles[$0] }) { delete(item) }
+                for index in offsets {
+                    if index < filteredFiles.count { delete(filteredFiles[index]) }
+                }
             }
         }
         .listStyle(.plain)
@@ -138,7 +143,7 @@ struct QuickLookPreview: UIViewControllerRepresentable {
         let url: URL
         init(url: URL) { self.url = url }
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
     }
 }
 
