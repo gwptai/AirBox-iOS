@@ -9,7 +9,10 @@ struct FilesView: View {
     @State private var previewURL: URL?
     @State private var shareURL: URL?
     @State private var errorMessage: String?
-    private var filteredFiles: [MediaFile] { searchText.isEmpty ? files : files.filter { $0.name.localizedCaseInsensitiveContains(searchText) } }
+
+    private var filteredFiles: [MediaFile] {
+        searchText.isEmpty ? files : files.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
 
     var body: some View {
         ZStack {
@@ -25,11 +28,12 @@ struct FilesView: View {
         .searchable(text: $searchText, prompt: "Поиск файлов")
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { CircleIconButton(systemImage: "plus") { showImporter = true } } }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { importFiles($0) }
-        .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
-            if let url = previewURL { QuickLookPreview(url: url).ignoresSafeArea() }
+        .sheet(item: $previewURL) { url in
+            QuickLookPreview(url: url)
+                .ignoresSafeArea()
         }
-        .sheet(isPresented: Binding(get: { shareURL != nil }, set: { if !$0 { shareURL = nil } })) {
-            if let url = shareURL { ShareSheet(items: [url]) }
+        .sheet(item: $shareURL) { url in
+            ShareSheet(items: [url])
         }
         .alert("Файл недоступен", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
@@ -95,14 +99,25 @@ struct FilesView: View {
     }
 
     private func importFiles(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let directory = MediaStorage.filesDirectory else { return }
-        for sourceURL in urls {
-            let accessing = sourceURL.startAccessingSecurityScopedResource()
-            defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
-            guard let copied = try? MediaStorage.copyFile(from: sourceURL, to: directory) else { continue }
-            files.insert(MediaFile(name: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, fileExtension: sourceURL.pathExtension, fileSize: copied.fileSize), at: 0)
+        switch result {
+        case .success(let urls):
+            guard let directory = MediaStorage.filesDirectory else { return }
+            var imported = false
+            for sourceURL in urls {
+                let accessing = sourceURL.startAccessingSecurityScopedResource()
+                defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+                do {
+                    let copied = try MediaStorage.copyFile(from: sourceURL, to: directory)
+                    files.insert(MediaFile(name: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, fileExtension: sourceURL.pathExtension, fileSize: copied.fileSize), at: 0)
+                    imported = true
+                } catch {
+                    errorMessage = "Не удалось импортировать \(sourceURL.lastPathComponent): \(error.localizedDescription)"
+                }
+            }
+            if imported { MediaStorage.saveFiles(files) }
+        case .failure(let error):
+            errorMessage = error.localizedDescription
         }
-        MediaStorage.saveFiles(files)
     }
 }
 
@@ -116,6 +131,7 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
+
     func makeCoordinator() -> Coordinator { Coordinator(url: url) }
 
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
