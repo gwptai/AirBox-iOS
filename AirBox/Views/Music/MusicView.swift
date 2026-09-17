@@ -11,33 +11,46 @@ struct MusicView: View {
     @State private var isPlaying = false
     @State private var progress: Double = 0
     @State private var timer: Timer?
+    @State private var errorMessage: String?
 
-    private let audioTypes: [UTType] = [.audio, UTType(filenameExtension: "mp3") ?? .audio, UTType(filenameExtension: "m4a") ?? .audio, UTType(filenameExtension: "wav") ?? .audio, UTType(filenameExtension: "flac") ?? .audio]
+    private let audioTypes: [UTType] = [.audio]
     private var filteredTracks: [AudioItem] { searchText.isEmpty ? tracks : tracks.filter { $0.title.localizedCaseInsensitiveContains(searchText) } }
 
     var body: some View {
         ZStack {
             AppBackground()
-            if tracks.isEmpty { EmptyStateView(icon: "music.note.list", title: "Нет музыки", subtitle: "Импортируй музыку,\nчтобы слушать её здесь", actionTitle: "Импортировать музыку") { showImporter = true } }
-            else {
+            if tracks.isEmpty {
+                EmptyStateView(icon: "music.note.list", title: "Нет музыки", subtitle: "Импортируй музыку,\nчтобы слушать её здесь", actionTitle: "Импортировать музыку") { showImporter = true }
+            } else {
                 List {
                     ForEach(filteredTracks) { track in
                         Button { play(track) } label: { musicRow(track) }
-                            .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     }
                     .onDelete(perform: delete)
-                }.listStyle(.plain).scrollContentBackground(.hidden)
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
             if let track = currentTrack, let duration = player?.duration, duration > 0 {
-                VStack { Spacer(); playerBar(track: track, duration: duration) }.ignoresSafeArea(.keyboard)
+                VStack { Spacer(); playerBar(track: track, duration: duration) }
+                    .ignoresSafeArea(.keyboard)
             }
         }
-        .navigationTitle("Музыка").navigationBarTitleDisplayMode(.large)
+        .navigationTitle("Музыка")
+        .navigationBarTitleDisplayMode(.large)
         .searchable(text: $searchText, prompt: "Поиск музыки")
         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { CircleIconButton(systemImage: "plus") { showImporter = true } } }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: audioTypes, allowsMultipleSelection: true) { importTracks($0) }
-        .onDisappear { timer?.invalidate(); timer = nil }
+        .alert("Не удалось воспроизвести", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Неизвестная ошибка")
+        }
+        .onDisappear { stopPlayback() }
     }
 
     private func musicRow(_ track: AudioItem) -> some View {
@@ -51,46 +64,132 @@ struct MusicView: View {
                 }
             }
             Spacer()
-            Image(systemName: currentTrack?.id == track.id && isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.title2).foregroundStyle(AppTheme.accentGradient)
-        }.cardStyle()
+            Image(systemName: currentTrack?.id == track.id && isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                .font(.title2)
+                .foregroundStyle(AppTheme.accentGradient)
+        }
+        .cardStyle()
     }
 
     private func playerBar(track: AudioItem, duration: Double) -> some View {
         VStack(spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) { Text(track.title).foregroundColor(.white).font(.system(size: 15, weight: .semibold)).lineLimit(1); Text(isPlaying ? "Воспроизводится" : "Пауза").font(.caption).foregroundColor(AppTheme.textSecondary) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.title).foregroundColor(.white).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    Text(isPlaying ? "Воспроизводится" : "Пауза").font(.caption).foregroundColor(AppTheme.textSecondary)
+                }
                 Spacer()
-                Button { if isPlaying { player?.pause() } else { player?.play() }; isPlaying.toggle() } label: { Image(systemName: isPlaying ? "pause.fill" : "play.fill").foregroundColor(.black).frame(width: 40, height: 40).background(AppTheme.accentGradient).clipShape(Circle()) }
+                Button { togglePlayback() } label: {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .foregroundColor(.black)
+                        .frame(width: 40, height: 40)
+                        .background(AppTheme.accentGradient)
+                        .clipShape(Circle())
+                }
             }
-            Slider(value: $progress, in: 0...duration) { editing in if !editing { player?.currentTime = progress } }.tint(AppTheme.accent)
-            HStack { Text(formatTime(progress)); Spacer(); Text(formatTime(duration)) }.font(.caption2).foregroundColor(AppTheme.textSecondary)
+            Slider(value: $progress, in: 0...max(duration, 0.01)) { editing in
+                if !editing { player?.currentTime = progress }
+            }
+            .tint(AppTheme.accent)
+            HStack { Text(formatTime(progress)); Spacer(); Text(formatTime(duration)) }
+                .font(.caption2).foregroundColor(AppTheme.textSecondary)
         }
-        .padding(16).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: AppTheme.radiusL, style: .continuous)).overlay(RoundedRectangle(cornerRadius: AppTheme.radiusL, style: .continuous).stroke(AppTheme.stroke, lineWidth: 1)).padding(.horizontal, 12).padding(.bottom, 8)
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.radiusL, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AppTheme.radiusL, style: .continuous).stroke(AppTheme.stroke, lineWidth: 1))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     private func play(_ track: AudioItem) {
-        guard let url = track.localURL else { return }
+        guard let url = track.localURL, FileManager.default.fileExists(atPath: url.path) else {
+            errorMessage = "Файл музыки не найден. Импортируй его заново."
+            return
+        }
+
+        if currentTrack?.id == track.id, let player {
+            if player.isPlaying { player.pause(); isPlaying = false }
+            else { player.play(); isPlaying = true }
+            return
+        }
+
         do {
-            let session = AVAudioSession.sharedInstance(); try session.setCategory(.playback, mode: .default, options: [.allowAirPlay]); try session.setActive(true)
-            player = try AVAudioPlayer(contentsOf: url); player?.prepareToPlay(); player?.play(); currentTrack = track; isPlaying = true; progress = 0
-            timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in progress = player?.currentTime ?? 0; if player?.isPlaying == false && progress >= (player?.duration ?? 0) { isPlaying = false } }
-        } catch { currentTrack = nil; isPlaying = false }
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay])
+            try session.setActive(true, options: [])
+
+            let newPlayer = try AVAudioPlayer(contentsOf: url)
+            newPlayer.prepareToPlay()
+            newPlayer.volume = 1.0
+            guard newPlayer.play() else {
+                errorMessage = "iOS не смогло начать воспроизведение этого аудиофайла."
+                return
+            }
+
+            player?.stop()
+            player = newPlayer
+            currentTrack = track
+            isPlaying = true
+            progress = 0
+            startTimer()
+        } catch {
+            errorMessage = error.localizedDescription
+            currentTrack = nil
+            isPlaying = false
+        }
+    }
+
+    private func togglePlayback() {
+        guard let player else { return }
+        if player.isPlaying { player.pause(); isPlaying = false }
+        else if player.play() { isPlaying = true }
+    }
+
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            guard let player else { return }
+            progress = player.currentTime
+            if !player.isPlaying && player.currentTime >= max(player.duration - 0.15, 0) {
+                isPlaying = false
+            }
+        }
+    }
+
+    private func stopPlayback() {
+        timer?.invalidate()
+        timer = nil
+        player?.stop()
+        player = nil
+        isPlaying = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func importTracks(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result else { return }
+        guard case .success(let urls) = result, let dir = MediaStorage.audioDirectory else { return }
         for sourceURL in urls {
-            let accessing = sourceURL.startAccessingSecurityScopedResource(); defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
-            guard let dir = MediaStorage.audioDirectory, let copied = try? MediaStorage.copyFile(from: sourceURL, to: dir) else { continue }
-            let localURL = dir.appendingPathComponent(copied.fileName); let duration = AVURLAsset(url: localURL).duration.seconds
-            tracks.insert(AudioItem(title: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, duration: duration.isFinite && duration > 0 ? duration : nil, fileSize: copied.fileSize), at: 0)
+            let accessing = sourceURL.startAccessingSecurityScopedResource()
+            defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+            guard let copied = try? MediaStorage.copyFile(from: sourceURL, to: dir) else { continue }
+            let localURL = dir.appendingPathComponent(copied.fileName)
+            let duration = (try? AVAudioPlayer(contentsOf: localURL).duration) ?? 0
+            tracks.insert(AudioItem(title: sourceURL.deletingPathExtension().lastPathComponent, fileName: copied.fileName, duration: duration > 0 ? duration : nil, fileSize: copied.fileSize), at: 0)
         }
         MediaStorage.saveAudio(tracks)
     }
 
     private func delete(at offsets: IndexSet) {
-        for item in offsets.map({ filteredTracks[$0] }) { if currentTrack?.id == item.id { player?.stop(); currentTrack = nil; isPlaying = false }; MediaStorage.deleteFile(named: item.fileName, in: MediaStorage.audioDirectory); tracks.removeAll { $0.id == item.id } }
+        for item in offsets.map({ filteredTracks[$0] }) {
+            if currentTrack?.id == item.id { stopPlayback(); currentTrack = nil }
+            MediaStorage.deleteFile(named: item.fileName, in: MediaStorage.audioDirectory)
+            tracks.removeAll { $0.id == item.id }
+        }
         MediaStorage.saveAudio(tracks)
     }
-    private func formatTime(_ value: Double) -> String { let total = max(0, Int(value)); return String(format: "%d:%02d", total / 60, total % 60) }
+
+    private func formatTime(_ value: Double) -> String {
+        let total = max(0, Int(value))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
 }
