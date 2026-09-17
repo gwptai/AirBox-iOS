@@ -72,8 +72,8 @@ struct FilesView: View {
                 .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
             .onDelete { offsets in
-                for index in offsets {
-                    if index < filteredFiles.count { delete(filteredFiles[index]) }
+                for index in offsets where index < filteredFiles.count {
+                    delete(filteredFiles[index])
                 }
             }
         }
@@ -106,7 +106,10 @@ struct FilesView: View {
     private func importFiles(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            guard let directory = MediaStorage.filesDirectory else { return }
+            guard let directory = MediaStorage.filesDirectory else {
+                errorMessage = "Не удалось открыть хранилище файлов AirBox."
+                return
+            }
             var imported = false
             for sourceURL in urls {
                 let accessing = sourceURL.startAccessingSecurityScopedResource()
@@ -143,12 +146,15 @@ struct QuickLookPreview: UIViewControllerRepresentable {
         let url: URL
         init(url: URL) { self.url = url }
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
+        // Keep the Objective-C Quick Look protocol's existential spelling for Swift 6/Xcode 16.
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
     }
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
-    func makeUIViewController(context: Context) -> UIActivityViewController { UIActivityViewController(activityItems: items, applicationActivities: nil) }
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
