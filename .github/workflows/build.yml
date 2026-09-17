@@ -1,40 +1,67 @@
 name: Build AirBox
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-14
 
     steps:
-      - name: Checkout
+      - name: Скачать репозиторий
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Установить XcodeGen
+        run: |
+          brew install xcodegen
 
-      - name: Generate Xcode project
+      - name: Сгенерировать Xcode проект
         working-directory: AirBox
-        run: xcodegen generate
+        run: |
+          rm -rf AirBox.xcodeproj
+          xcodegen generate --spec project.yml
 
-      - name: Build
+      - name: Проверить проект
+        working-directory: AirBox
+        run: |
+          ls -la
+          ls -la App
+          ls -la Models
+          ls -la Views
+
+      - name: Собрать AirBox
         working-directory: AirBox
         run: |
           xcodebuild \
             -project AirBox.xcodeproj \
             -scheme AirBox \
+            -sdk iphonesimulator \
             -configuration Debug \
-            -sdk iphoneos \
-            -derivedDataPath build \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            build
 
-      - name: Upload app
+      - name: Упаковать приложение
+        working-directory: AirBox
+        run: |
+          mkdir -p build
+          xcodebuild \
+            -project AirBox.xcodeproj \
+            -scheme AirBox \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Сохранить результат сборки
         uses: actions/upload-artifact@v4
         with:
-          name: AirBox-app
-          path: AirBox/build/Build/Products/Debug-iphoneos/AirBox.app
+          name: AirBox-iOS-build
+          path: AirBox/build/DerivedData/Build/Products/Debug-iphonesimulator/AirBox.app
