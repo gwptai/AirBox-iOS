@@ -7,9 +7,14 @@ options:
   defaultConfig: Debug
   generateEmptyDirectories: true
 
+packages:
+  LlamaSwift:
+    url: https://github.com/mattt/llama.swift
+    from: 2.10331.0
+
 settings:
   base:
-    SWIFT_VERSION: "5.9"
+    SWIFT_VERSION: "6.0"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
     ENABLE_PREVIEWS: "YES"
@@ -46,7 +51,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.airbox.app
         PRODUCT_NAME: AirBox
-        SWIFT_VERSION: "5.9"
+        SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         INFOPLIST_FILE: Info.plist
@@ -62,4 +67,6 @@ targets:
       - path: Services
       - path: Views
 
-    dependencies: []
+    dependencies:
+      - package: LlamaSwift
+        product: LlamaSwift
