@@ -1,6 +1,10 @@
 import Foundation
 import LlamaSwift
 
+private func llama_batch_clear(_ batch: inout llama_batch) {
+    batch.n_tokens = 0
+}
+
 // MARK: - Errors
 
 enum LocalAIError: LocalizedError {
@@ -85,6 +89,7 @@ actor LocalLlamaEngine {
             throw LocalAIError.modelLoadFailed
         }
 
+        _ = model
         let promptTokens = tokenize(prompt, vocab: vocab, addBOS: true)
         guard !promptTokens.isEmpty else {
             throw LocalAIError.promptTooLarge
@@ -251,17 +256,14 @@ actor LocalLlamaEngine {
 final class LocalAIService: AIService, @unchecked Sendable {
     let displayName = "AirBox Local AI"
 
-    private let configuration: LocalAIConfiguration
     private let engine: LocalLlamaEngine
 
     init(configuration: LocalAIConfiguration = .default) {
-        self.configuration = configuration
         self.engine = LocalLlamaEngine(configuration: configuration)
     }
 
     func send(messages: [ChatMessage]) async throws -> String {
-        let prompt = makePrompt(messages)
-        return try await engine.generate(prompt: prompt)
+        try await engine.generate(prompt: makePrompt(messages))
     }
 
     private func makePrompt(_ messages: [ChatMessage]) -> String {
