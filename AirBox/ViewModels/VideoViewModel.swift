@@ -3,16 +3,13 @@ import AVFoundation
 
 @MainActor
 final class VideoViewModel: ObservableObject {
-
     @Published var videos: [VideoItem] = []
-    @Published var isImporting: Bool = false
-    @Published var errorMessage: String? = nil
+    @Published var isImporting = false
+    @Published var errorMessage: String?
 
     init() {
         videos = MediaStorage.loadVideos()
     }
-
-    // MARK: - Import
 
     func importVideo(from sourceURL: URL) async {
         isImporting = true
@@ -24,32 +21,26 @@ final class VideoViewModel: ObservableObject {
         }
 
         do {
-            guard let videosDir = MediaStorage.videosDirectory else {
-                throw ImportError.directoryUnavailable
-            }
+            let result = try await Task.detached(priority: .userInitiated) {
+                guard let videosDir = MediaStorage.videosDirectory else {
+                    throw ImportError.directoryUnavailable
+                }
 
-            let (fileName, fileSize) = try MediaStorage.copyFile(
-                from: sourceURL,
-                to: videosDir
-            )
+                let copied = try MediaStorage.copyFile(from: sourceURL, to: videosDir)
+                let localURL = videosDir.appendingPathComponent(copied.fileName)
+                let duration = await Self.loadDuration(from: localURL)
+                let title = sourceURL.deletingPathExtension().lastPathComponent
 
-            let localURL = videosDir.appendingPathComponent(fileName)
-            let duration = await loadDuration(from: localURL)
+                return VideoItem(
+                    title: title,
+                    fileName: copied.fileName,
+                    duration: duration,
+                    fileSize: copied.fileSize
+                )
+            }.value
 
-            let title = sourceURL
-                .deletingPathExtension()
-                .lastPathComponent
-
-            let item = VideoItem(
-                title: title,
-                fileName: fileName,
-                duration: duration,
-                fileSize: fileSize
-            )
-
-            videos.insert(item, at: 0)
+            videos.insert(result, at: 0)
             MediaStorage.saveVideos(videos)
-
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -57,31 +48,22 @@ final class VideoViewModel: ObservableObject {
         isImporting = false
     }
 
-    // MARK: - Delete
-
     func deleteVideo(_ item: VideoItem) {
-        MediaStorage.deleteFile(
-            named: item.fileName,
-            in: MediaStorage.videosDirectory
-        )
+        MediaStorage.deleteFile(named: item.fileName, in: MediaStorage.videosDirectory)
         videos.removeAll { $0.id == item.id }
         MediaStorage.saveVideos(videos)
     }
 
-    // MARK: - Private
-
-    private func loadDuration(from url: URL) async -> Double? {
+    private static func loadDuration(from url: URL) async -> Double? {
         let asset = AVURLAsset(url: url)
         do {
             let cmDuration = try await asset.load(.duration)
             let seconds = CMTimeGetSeconds(cmDuration)
-            return (seconds.isFinite && seconds > 0) ? seconds : nil
+            return seconds.isFinite && seconds > 0 ? seconds : nil
         } catch {
             return nil
         }
     }
-
-    // MARK: - Errors
 
     enum ImportError: LocalizedError {
         case directoryUnavailable
